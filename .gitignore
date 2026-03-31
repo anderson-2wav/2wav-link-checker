@@ -1,0 +1,6 @@
+.idea
+node_modules
+.claude
+.link-checker-cache.json
+*.csv
+*.html
