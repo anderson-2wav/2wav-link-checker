@@ -8,7 +8,6 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test:wildlife": "node src/cli.js https://wildlifeillinois.org/sitemap.xml -o ./wildlife-illinois-link-report -f both -v --domain-concurrency 1 --domain-delay 1000",
     "publish:github": "git checkout public && git checkout main -- src/ package.json package-lock.json README.md .gitignore && git add -A && git diff --cached --quiet || git commit -m 'Sync from main' && git push github public:main && git checkout main"
   },
   "repository": {
