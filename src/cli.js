@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 2wav Inc. MIT License.
 'use strict';
 
 const { program } = require('commander');

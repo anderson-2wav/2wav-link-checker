@@ -1,3 +1,4 @@
+// Copyright (c) 2026 2wav Inc. MIT License.
 'use strict';
 
 const { XMLParser } = require('fast-xml-parser');
