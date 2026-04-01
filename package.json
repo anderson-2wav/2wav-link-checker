@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "publish:github": "git checkout public && git checkout main -- src/ package.json package-lock.json README.md .gitignore && git add -A && git diff --cached --quiet || git commit -m 'Sync from main' && git push github public:main && git checkout main"
+    "publish:github": "git push github public:main"
   },
   "repository": {
     "type": "git",
