@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { statusDescription, formatDuration } = require('./utils');
 const { classify } = require('./checker');
 
@@ -95,6 +96,8 @@ function generateCsv(rows, skippedUrls = []) {
   for (const url of skippedUrls) {
     lines.push(['', url, '', '', 'skipped', 'Bot-blocked domain', '', '', ''].map(escapeCsv).join(','));
   }
+  lines.push('');
+  lines.push('# This software © 2026 2wav inc. All Rights Reserved. Free for use under the GNU Affero General Public License v3.0 (https://www.gnu.org/licenses/agpl-3.0.html)');
   return lines.join('\n');
 }
 
@@ -119,7 +122,7 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-function generateHtml(rows, summary) {
+function generateHtml(rows, summary, logoDataUri = '') {
   const { pagesScanned, uniqueLinks, uniqueChecked, internalCount, externalCount, skippedUrls = [], duration, startTime } = summary;
 
   const brokenCount = rows.filter(r => r.category === 'broken').length;
@@ -202,6 +205,11 @@ function generateHtml(rows, summary) {
   .filter-bar{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
   .filter-bar input,.filter-bar select{padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
   .filter-bar input{flex:1;min-width:200px}
+  footer{margin-top:48px;padding-top:16px;border-top:1px solid #e5e7eb;display:flex;align-items:center;gap:16px;color:#6b7280;font-size:12px}
+  footer a{color:#6b7280}
+  footer a:hover{color:#1f2937}
+  .footer-logo{height:28px;width:auto;display:block;opacity:.7}
+  .footer-logo:hover{opacity:1}
 </style>
 </head>
 <body>
@@ -256,6 +264,11 @@ ${skippedUrls.length > 0 ? `
   </ul>
 </details>` : ''}
 
+<footer>
+  ${logoDataUri ? `<a href="https://2wav.com" target="_blank" aria-label="2wav inc."><img src="${logoDataUri}" alt="2wav inc." class="footer-logo"></a>` : ''}
+  <p>This software &copy; 2026 2wav inc. All Rights Reserved. Free for use under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank">GNU Affero General Public License v3.0</a></p>
+</footer>
+
 <script>
 function applyFilters() {
   const text = document.getElementById('filterText').value.toLowerCase();
@@ -296,15 +309,22 @@ function writeReports(pageResults, checkResults, summary, opts = {}) {
 
   const skippedUrls = summary.skippedUrls || [];
 
+  let logoDataUri = '';
+  try {
+    const logoPath = path.join(__dirname, '../images/2wav-logo-dark.svg');
+    const logoBase64 = fs.readFileSync(logoPath, 'base64');
+    if (logoBase64) logoDataUri = `data:image/svg+xml;base64,${logoBase64}`;
+  } catch (_) { /* logo is optional */ }
+
   if (format === 'csv' || format === 'both') {
-    const path = `${output}.csv`;
-    fs.writeFileSync(path, generateCsv(rows, skippedUrls), 'utf-8');
-    written.push(path);
+    const csvPath = `${output}.csv`;
+    fs.writeFileSync(csvPath, generateCsv(rows, skippedUrls), 'utf-8');
+    written.push(csvPath);
   }
   if (format === 'html' || format === 'both') {
-    const path = `${output}.html`;
-    fs.writeFileSync(path, generateHtml(rows, summary), 'utf-8');
-    written.push(path);
+    const htmlPath = `${output}.html`;
+    fs.writeFileSync(htmlPath, generateHtml(rows, summary, logoDataUri), 'utf-8');
+    written.push(htmlPath);
   }
 
   return { rows, written };
