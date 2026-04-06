@@ -1,4 +1,4 @@
-// Copyright (c) 2026 2wav Inc. MIT License.
+// Copyright (c) 2026 2wav Inc. AGPL-3.0-only.
 'use strict';
 
 /**
