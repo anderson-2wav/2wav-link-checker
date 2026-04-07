@@ -16,7 +16,19 @@ async function checkUrl(url, opts = {}) {
   const timer = setTimeout(() => controller.abort(), timeout);
 
   const fetchOpts = {
-    headers: { 'User-Agent': userAgent },
+    headers: {
+      'User-Agent': userAgent,
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'cross-site',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1',
+    },
     redirect: 'follow',
     signal: controller.signal,
   };
@@ -26,13 +38,19 @@ async function checkUrl(url, opts = {}) {
   async function attempt(method) {
     const res = await fetch(url, { ...fetchOpts, method });
     const elapsed = Date.now() - start;
-    // Collect redirect chain via node-fetch's res.url (final URL after redirects)
     const redirectUrl = res.url !== url ? res.url : null;
+    // Capture WAF/CDN signals to distinguish bot-blocks from real 403s
+    const serverSig = [
+      res.headers.get('server'),
+      res.headers.get('cf-ray') ? 'cloudflare' : null,
+      res.headers.get('x-amz-cf-id') ? 'cloudfront' : null,
+    ].filter(Boolean).join(', ') || null;
     return {
       url,
       status: res.status,
       redirectUrl,
       responseTime: elapsed,
+      serverSig,
       error: null,
     };
   }
@@ -41,7 +59,7 @@ async function checkUrl(url, opts = {}) {
     let result = await attempt('HEAD');
     // hypothesis, illinois.gov returns 404 on HEAD
     // Retry with GET if HEAD is unreliable
-    if (result.status === 404 || result.status === 405 || result.status === 501) {
+    if (result.status === 403 || result.status === 404 || result.status === 405 || result.status === 501) {
       result = await attempt('GET');
     }
     return result;
@@ -64,6 +82,7 @@ async function checkUrl(url, opts = {}) {
       status: null,
       redirectUrl: null,
       responseTime: elapsed,
+      serverSig: null,
       error: errorType,
     };
   } finally {

@@ -51,7 +51,11 @@ function buildRows(pageResults, checkResults, opts = {}) {
         linkText: link.text,
         linkType: link.type,
         status: result.status,
-        statusDesc: result.error || statusDescription(result.status),
+        statusDesc: result.error
+          ? result.error
+          : result.status === 403 && result.serverSig
+            ? `Forbidden (${result.serverSig})`
+            : statusDescription(result.status),
         category: cat,
         redirectUrl: result.redirectUrl || '',
         responseTime: result.responseTime != null ? result.responseTime : '',
