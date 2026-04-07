@@ -34,7 +34,11 @@ async function extractLinks(browser, pageUrl, opts = {}) {
     try {
       await page.goto(pageUrl, { waitUntil: 'networkidle', timeout });
     } catch (navErr) {
-      // If networkidle times out, try domcontentloaded as fallback
+      // If chromium already navigated to an error page, it's a hard failure — no retry
+      if (page.url().startsWith('chrome-error://')) {
+        return { links: [], error: navErr.message };
+      }
+      // Otherwise (e.g. networkidle timeout), retry with domcontentloaded
       try {
         await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout });
       } catch (e2) {
