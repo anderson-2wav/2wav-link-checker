@@ -101,7 +101,8 @@ function classify(result) {
   const s = result.status;
   if (s >= 200 && s < 300) return 'ok';
   if (s >= 300 && s < 400) return 'redirect';
-  return 'broken'; // 4xx, 5xx
+  if (s === 403) return 'uncheckable'; // bot-blocked or paywalled — content may exist
+  return 'broken'; // other 4xx, 5xx
 }
 
 /**

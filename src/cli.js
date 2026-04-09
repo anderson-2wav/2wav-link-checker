@@ -280,9 +280,11 @@ async function finalize(pageResults, allLinksMap, startTime, cache, partial, bro
 
   // Build summary stats
   let totalBroken = 0;
+  let totalUncheckable = 0;
   for (const result of checkResults.values()) {
     const cat = classify(result);
     if (cat === 'broken' || cat === 'error' || cat === 'timeout') totalBroken++;
+    if (cat === 'uncheckable') totalUncheckable++;
   }
 
   const summary = {
@@ -309,6 +311,9 @@ async function finalize(pageResults, allLinksMap, startTime, cache, partial, bro
     log(`          ${verifySummary.cleared} of ${verifySummary.checked} fetch-level 403s cleared by browser verification`);
   }
   log(`          ${totalBroken} broken links found`);
+  if (totalUncheckable > 0) {
+    log(`          ${totalUncheckable} uncheckable (403 — bot-blocked or paywalled)`);
+  }
   log(`          Report saved to ${written.join(' and ')}`);
 }
 

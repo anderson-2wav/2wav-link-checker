@@ -65,7 +65,7 @@ function buildRows(pageResults, checkResults, opts = {}) {
   }
 
   // Sort: by pageUrl, then errors first
-  const catOrder = { error: 0, timeout: 1, broken: 2, redirect: 3 };
+  const catOrder = { error: 0, timeout: 1, broken: 2, uncheckable: 3, redirect: 4 };
   rows.sort((a, b) => {
     if (a.pageUrl < b.pageUrl) return -1;
     if (a.pageUrl > b.pageUrl) return 1;
@@ -108,6 +108,7 @@ function generateCsv(rows, skippedUrls = []) {
 function categoryBadge(cat, status) {
   const colors = {
     broken: '#dc2626',
+    uncheckable: '#f97316',
     error: '#ea580c',
     timeout: '#d97706',
     redirect: '#ca8a04',
@@ -129,9 +130,10 @@ function escapeHtml(s) {
 function generateHtml(rows, summary, logoDataUri = '') {
   const { pagesScanned, uniqueLinks, uniqueChecked, internalCount, externalCount, skippedUrls = [], duration, startTime } = summary;
 
-  const brokenCount = rows.filter(r => r.category === 'broken').length;
-  const errorCount = rows.filter(r => r.category === 'error' || r.category === 'timeout').length;
-  const redirectCount = rows.filter(r => r.category === 'redirect').length;
+  const brokenCount       = rows.filter(r => r.category === 'broken').length;
+  const uncheckableCount  = rows.filter(r => r.category === 'uncheckable').length;
+  const errorCount        = rows.filter(r => r.category === 'error' || r.category === 'timeout').length;
+  const redirectCount     = rows.filter(r => r.category === 'redirect').length;
 
   // Group by page for per-page breakdown
   const byPage = new Map();
@@ -189,6 +191,7 @@ function generateHtml(rows, summary, logoDataUri = '') {
   .card .label{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em}
   .card .value{font-size:28px;font-weight:700;margin-top:4px}
   .card.broken .value{color:#dc2626}
+  .card.uncheckable .value{color:#f97316}
   .card.error .value{color:#ea580c}
   .card.redirect .value{color:#ca8a04}
   .card.skipped .value{color:#6b7280}
@@ -198,6 +201,7 @@ function generateHtml(rows, summary, logoDataUri = '') {
   td{padding:8px 12px;border-bottom:1px solid #f3f4f6;vertical-align:top;word-break:break-all}
   tr:last-child td{border-bottom:none}
   tr.row-broken td{background:#fff5f5}
+  tr.row-uncheckable td{background:#fff7ed}
   tr.row-error td,tr.row-timeout td{background:#fff7f0}
   tr.row-redirect td{background:#fefce8}
   a{color:#2563eb;text-decoration:none}
@@ -227,6 +231,7 @@ function generateHtml(rows, summary, logoDataUri = '') {
   <div class="card"><div class="label">Internal</div><div class="value">${internalCount.toLocaleString()}</div></div>
   <div class="card"><div class="label">External</div><div class="value">${externalCount.toLocaleString()}</div></div>
   <div class="card broken"><div class="label">Broken (4xx/5xx)</div><div class="value">${brokenCount.toLocaleString()}</div></div>
+  <div class="card uncheckable"><div class="label">Uncheckable (403)</div><div class="value">${uncheckableCount.toLocaleString()}</div></div>
   <div class="card error"><div class="label">Errors / Timeouts</div><div class="value">${errorCount.toLocaleString()}</div></div>
   <div class="card redirect"><div class="label">Redirects</div><div class="value">${redirectCount.toLocaleString()}</div></div>
   <div class="card skipped"><div class="label">Skipped (bot-blocked)</div><div class="value">${skippedUrls.length.toLocaleString()}</div></div>
@@ -238,6 +243,7 @@ function generateHtml(rows, summary, logoDataUri = '') {
   <select id="filterCat" onchange="applyFilters()">
     <option value="">All categories</option>
     <option value="broken">Broken (4xx/5xx)</option>
+    <option value="uncheckable">Uncheckable (403)</option>
     <option value="error">Error</option>
     <option value="timeout">Timeout</option>
     <option value="redirect">Redirect</option>
