@@ -57,6 +57,49 @@ function pad(n, total) {
   return String(n).padStart(String(total).length, ' ');
 }
 
+/**
+ * Re-check a URL using a real Playwright browser context.
+ * Used as a fallback for URLs that returned 403 via fetch, which may be
+ * bot-detection blocks that a real browser can pass (TLS fingerprint, JS challenges, cookies).
+ */
+async function verifyUrlWithPlaywright(browser, url, opts) {
+  const contextOpts = { ignoreHTTPSErrors: true };
+  if (opts.userAgent) contextOpts.userAgent = opts.userAgent;
+  const timeout = opts.linkTimeout ?? 15000;
+
+  let context, page;
+  const start = Date.now();
+  try {
+    context = await browser.newContext(contextOpts);
+    page = await context.newPage();
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+    const elapsed = Date.now() - start;
+    const status = response?.status() ?? null;
+    const finalUrl = page.url();
+    return {
+      url,
+      status,
+      redirectUrl: finalUrl !== url ? finalUrl : null,
+      responseTime: elapsed,
+      serverSig: null,
+      error: null,
+    };
+  } catch (err) {
+    const elapsed = Date.now() - start;
+    return {
+      url,
+      status: null,
+      redirectUrl: null,
+      responseTime: elapsed,
+      serverSig: null,
+      error: `Error: ${err.message.slice(0, 80)}`,
+    };
+  } finally {
+    if (page) await page.close().catch(() => {});
+    if (context) await context.close().catch(() => {});
+  }
+}
+
 async function main() {
   const startTime = Date.now();
   const filter = opts.filter ? new RegExp(opts.filter) : null;
@@ -145,12 +188,11 @@ async function main() {
     )
   );
 
-  await browser.close().catch(() => {});
-
-  await finalize(pageResults, allLinksMap, startTime, cache, false);
+  // Keep browser open — finalize uses it for Playwright verification of 403s, then closes it
+  await finalize(pageResults, allLinksMap, startTime, cache, false, browser);
 }
 
-async function finalize(pageResults, allLinksMap, startTime, cache, partial) {
+async function finalize(pageResults, allLinksMap, startTime, cache, partial, browser = null) {
   // Apply scope filter
   const opts2 = program.opts();
   let urlsToCheck = [...allLinksMap.keys()];
@@ -203,6 +245,35 @@ async function finalize(pageResults, allLinksMap, startTime, cache, partial) {
     },
   });
 
+  // Phase 2b — Playwright verification for fetch-level 403s
+  let verifySummary = null;
+  if (browser && !partial) {
+    const toVerify = [...checkResults.entries()]
+      .filter(([, r]) => r.status === 403)
+      .map(([url]) => url);
+
+    if (toVerify.length > 0) {
+      log(`[Verify]  Re-checking ${toVerify.length} blocked URL${toVerify.length === 1 ? '' : 's'} via browser…`);
+      const pLimitVerify = (await import('p-limit')).default;
+      const verifyLimit = pLimitVerify(3);
+      let verified = 0;
+      await Promise.all(
+        toVerify.map(url =>
+          verifyLimit(async () => {
+            const result = await verifyUrlWithPlaywright(browser, url, opts2);
+            checkResults.set(url, result);
+            verified++;
+            logVerbose(`[Verify]  [${String(verified).padStart(String(toVerify.length).length, ' ')}/${toVerify.length}] ${result.status ?? result.error} ${url}`);
+          })
+        )
+      );
+      const cleared = toVerify.filter(u => (checkResults.get(u)?.status ?? 0) < 400).length;
+      verifySummary = { checked: toVerify.length, cleared };
+    }
+  }
+
+  if (browser) await browser.close().catch(() => {});
+
   cache?.save();
 
   const duration = Date.now() - startTime;
@@ -234,6 +305,9 @@ async function finalize(pageResults, allLinksMap, startTime, cache, partial) {
   log(`\n[Done]    Scan complete in ${formatDuration(duration)}`);
   log(`          ${pageResults.size} pages scanned`);
   log(`          ${urlsToCheck.length.toLocaleString()} unique links checked`);
+  if (verifySummary) {
+    log(`          ${verifySummary.cleared} of ${verifySummary.checked} fetch-level 403s cleared by browser verification`);
+  }
   log(`          ${totalBroken} broken links found`);
   log(`          Report saved to ${written.join(' and ')}`);
 }
