@@ -16,6 +16,28 @@ const { classify } = require('./checker');
  * @param {object} opts
  * @param {boolean} opts.includeRedirects
  */
+/**
+ * Status code to show for a row. Redirect rows show the 3xx that was returned;
+ * result.status holds the status of the destination it was followed to.
+ */
+function displayStatus(result, cat) {
+  return cat === 'redirect' && result.redirectStatus ? result.redirectStatus : result.status;
+}
+
+/**
+ * Human-readable status for a row, including WAF attribution on 403s and the
+ * destination status on redirects.
+ */
+function describeStatus(result, cat) {
+  if (result.error) return result.error;
+  if (result.status === 403 && result.serverSig) return `Forbidden (${result.serverSig})`;
+  if (cat === 'redirect' && result.redirectStatus) {
+    const hops = result.redirectCount > 1 ? ` via ${result.redirectCount} hops` : '';
+    return `${statusDescription(result.redirectStatus)}${hops} → ${result.status}`;
+  }
+  return statusDescription(result.status);
+}
+
 function buildRows(pageResults, checkResults, opts = {}) {
   const { includeRedirects = false } = opts;
   const rows = [];
@@ -50,12 +72,8 @@ function buildRows(pageResults, checkResults, opts = {}) {
         linkUrl: link.url,
         linkText: link.text,
         linkType: link.type,
-        status: result.status,
-        statusDesc: result.error
-          ? result.error
-          : result.status === 403 && result.serverSig
-            ? `Forbidden (${result.serverSig})`
-            : statusDescription(result.status),
+        status: displayStatus(result, cat),
+        statusDesc: describeStatus(result, cat),
         category: cat,
         redirectUrl: result.redirectUrl || '',
         responseTime: result.responseTime != null ? result.responseTime : '',

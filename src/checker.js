@@ -29,26 +29,61 @@ async function checkUrl(url, opts = {}) {
       'Sec-Fetch-User': '?1',
       'Upgrade-Insecure-Requests': '1',
     },
-    redirect: 'follow',
+    redirect: 'manual',
     signal: controller.signal,
   };
 
   const start = Date.now();
 
+  // Redirects are walked by hand rather than with `redirect: 'follow'` so the
+  // status of the first hop survives. A link checker needs to tell a permanent
+  // redirect (update the link) from a temporary one (leave it alone), and
+  // 'follow' collapses the whole chain into the final status.
   async function attempt(method) {
-    const res = await fetch(url, { ...fetchOpts, method });
+    let currentUrl = url;
+    let redirectStatus = null;
+    let redirectCount = 0;
+    let res;
+
+    for (;;) {
+      res = await fetch(currentUrl, { ...fetchOpts, method });
+      if (res.status < 300 || res.status >= 400) break;
+
+      const location = res.headers.get('location');
+      if (!location) break; // 3xx with nowhere to go — report it as-is
+
+      let next;
+      try {
+        next = new URL(location, currentUrl).href; // Location is allowed to be relative
+      } catch {
+        break; // unparseable Location — report the 3xx as-is
+      }
+
+      if (redirectCount >= maxRedirects) {
+        const err = new Error(`Too many redirects (>${maxRedirects})`);
+        err.code = 'TOO_MANY_REDIRECTS';
+        throw err;
+      }
+      if (redirectStatus === null) redirectStatus = res.status;
+      redirectCount++;
+      currentUrl = next;
+      res.body?.cancel().catch(() => {}); // release the socket before the next hop
+    }
+
     const elapsed = Date.now() - start;
-    const redirectUrl = res.url !== url ? res.url : null;
     // Capture WAF/CDN signals to distinguish bot-blocks from real 403s
     const serverSig = [
       res.headers.get('server'),
       res.headers.get('cf-ray') ? 'cloudflare' : null,
       res.headers.get('x-amz-cf-id') ? 'cloudfront' : null,
     ].filter(Boolean).join(', ') || null;
+    res.body?.cancel().catch(() => {});
     return {
       url,
       status: res.status,
-      redirectUrl,
+      redirectUrl: redirectCount > 0 ? currentUrl : null,
+      redirectStatus,
+      redirectCount,
       responseTime: elapsed,
       serverSig,
       error: null,
@@ -68,6 +103,8 @@ async function checkUrl(url, opts = {}) {
     let errorType;
     if (err.name === 'AbortError' || err.type === 'aborted') {
       errorType = 'Timeout';
+    } else if (err.code === 'TOO_MANY_REDIRECTS') {
+      errorType = err.message;
     } else if (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN') {
       errorType = 'DNS Error';
     } else if (err.code === 'ECONNREFUSED') {
@@ -81,6 +118,8 @@ async function checkUrl(url, opts = {}) {
       url,
       status: null,
       redirectUrl: null,
+      redirectStatus: null,
+      redirectCount: 0,
       responseTime: elapsed,
       serverSig: null,
       error: errorType,
@@ -99,9 +138,11 @@ function classify(result) {
     return 'error';
   }
   const s = result.status;
-  if (s >= 200 && s < 300) return 'ok';
-  if (s >= 300 && s < 400) return 'redirect';
+  if (s >= 300 && s < 400) return 'redirect'; // unfollowable 3xx (no/!bad Location)
   if (s === 403) return 'uncheckable'; // bot-blocked or paywalled — content may exist
+  // A redirect that lands somewhere broken is reported as broken — the worse
+  // problem wins; redirectUrl still shows where it went.
+  if (s >= 200 && s < 300) return result.redirectStatus ? 'redirect' : 'ok';
   return 'broken'; // other 4xx, 5xx
 }
 

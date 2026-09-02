@@ -76,10 +76,23 @@ async function verifyUrlWithPlaywright(browser, url, opts) {
     const elapsed = Date.now() - start;
     const status = response?.status() ?? null;
     const finalUrl = page.url();
+    // Walk the chain backwards so the first hop's status is what we keep,
+    // matching what checkUrl records for a fetch-level redirect.
+    let redirectStatus = null;
+    let redirectCount = 0;
+    let hop = response?.request().redirectedFrom();
+    while (hop) {
+      redirectCount++;
+      const hopResponse = await hop.response();
+      if (hopResponse) redirectStatus = hopResponse.status();
+      hop = hop.redirectedFrom();
+    }
     return {
       url,
       status,
       redirectUrl: finalUrl !== url ? finalUrl : null,
+      redirectStatus,
+      redirectCount,
       responseTime: elapsed,
       serverSig: null,
       error: null,
@@ -90,6 +103,8 @@ async function verifyUrlWithPlaywright(browser, url, opts) {
       url,
       status: null,
       redirectUrl: null,
+      redirectStatus: null,
+      redirectCount: 0,
       responseTime: elapsed,
       serverSig: null,
       error: `Error: ${err.message.slice(0, 80)}`,

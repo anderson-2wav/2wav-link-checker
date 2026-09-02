@@ -3,6 +3,11 @@
 
 const fs = require('fs');
 
+// Bumped when the cached entry shape changes. Entries from an older version are
+// treated as misses — a pre-v2 entry has no redirect metadata, so replaying it
+// would report a redirecting URL as a plain 200.
+const CACHE_VERSION = 2;
+
 /**
  * Persistent cache of known-good URL check results.
  * Stored as a JSON file: { [url]: { status, responseTime, checkedAt } }
@@ -36,6 +41,10 @@ class LinkCache {
   get(url) {
     const entry = this.data[url];
     if (!entry) return null;
+    if (entry.v !== CACHE_VERSION) {
+      delete this.data[url];
+      return null;
+    }
     if (Date.now() - entry.checkedAt > this.maxAgeMs) {
       delete this.data[url];
       return null;
@@ -44,6 +53,8 @@ class LinkCache {
       url,
       status: entry.status,
       redirectUrl: entry.redirectUrl || null,
+      redirectStatus: entry.redirectStatus || null,
+      redirectCount: entry.redirectCount || 0,
       responseTime: entry.responseTime,
       error: null,
       fromCache: true,
@@ -55,8 +66,11 @@ class LinkCache {
     if (!this.filePath) return;
     if (result.error || result.status == null || result.status < 200 || result.status >= 300) return;
     this.data[url] = {
+      v: CACHE_VERSION,
       status: result.status,
       redirectUrl: result.redirectUrl || null,
+      redirectStatus: result.redirectStatus || null,
+      redirectCount: result.redirectCount || 0,
       responseTime: result.responseTime,
       checkedAt: Date.now(),
     };
