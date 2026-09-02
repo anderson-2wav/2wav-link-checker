@@ -16,6 +16,9 @@ const { classify } = require('./checker');
  * @param {object} opts
  * @param {boolean} opts.includeRedirects
  */
+// Severity order, worst first.
+const catOrder = { error: 0, timeout: 1, broken: 2, uncheckable: 3, redirect: 4 };
+
 /**
  * Status code to show for a row. Redirect rows show the 3xx that was returned;
  * result.status holds the status of the destination it was followed to.
@@ -50,6 +53,7 @@ function buildRows(pageResults, checkResults, opts = {}) {
         linkUrl: pageUrl,
         linkText: '',
         linkType: 'page',
+        occurrences: 1,
         status: null,
         statusDesc: error,
         category: 'error',
@@ -72,6 +76,7 @@ function buildRows(pageResults, checkResults, opts = {}) {
         linkUrl: link.url,
         linkText: link.text,
         linkType: link.type,
+        occurrences: link.count ?? 1,
         status: displayStatus(result, cat),
         statusDesc: describeStatus(result, cat),
         category: cat,
@@ -83,7 +88,6 @@ function buildRows(pageResults, checkResults, opts = {}) {
   }
 
   // Sort: by pageUrl, then errors first
-  const catOrder = { error: 0, timeout: 1, broken: 2, uncheckable: 3, redirect: 4 };
   rows.sort((a, b) => {
     if (a.pageUrl < b.pageUrl) return -1;
     if (a.pageUrl > b.pageUrl) return 1;
@@ -100,6 +104,70 @@ function escapeCsv(val) {
   }
   return s;
 }
+
+/**
+ * Collapse detail rows into one row per unique link URL.
+ *
+ * Every row sharing a link URL carries the same check result — checkUrls checks
+ * each URL exactly once — so the aggregate keeps that result verbatim and adds
+ * the two numbers a reviewer needs: how many times the link is used, and how
+ * many pages they have to edit to fix it.
+ */
+function buildSummaryRows(rows) {
+  const byLink = new Map();
+
+  for (const row of rows) {
+    let entry = byLink.get(row.linkUrl);
+    if (!entry) {
+      entry = {
+        linkUrl: row.linkUrl,
+        linkText: row.linkText,
+        linkTypes: new Set(),
+        status: row.status,
+        statusDesc: row.statusDesc,
+        category: row.category,
+        redirectUrl: row.redirectUrl,
+        internal: row.internal,
+        occurrences: 0,
+        pages: new Set(),
+        examplePage: row.pageUrl,
+      };
+      byLink.set(row.linkUrl, entry);
+    }
+    // Link text varies from page to page; the first non-empty one is the label.
+    if (!entry.linkText) entry.linkText = row.linkText;
+    entry.linkTypes.add(row.linkType);
+    entry.occurrences += row.occurrences;
+    entry.pages.add(row.pageUrl);
+    // Keep the example stable regardless of the order pages were scanned in.
+    if (row.pageUrl < entry.examplePage) entry.examplePage = row.pageUrl;
+  }
+
+  const summaryRows = [...byLink.values()].map(e => ({
+    linkUrl: e.linkUrl,
+    linkText: e.linkText,
+    linkType: [...e.linkTypes].join(', '),
+    status: e.status,
+    statusDesc: e.statusDesc,
+    category: e.category,
+    redirectUrl: e.redirectUrl,
+    internal: e.internal,
+    occurrences: e.occurrences,
+    pageCount: e.pages.size,
+    examplePage: e.examplePage,
+  }));
+
+  // Worst first, then widest blast radius — the order a reviewer works in.
+  summaryRows.sort((a, b) =>
+    (catOrder[a.category] ?? 9) - (catOrder[b.category] ?? 9) ||
+    b.occurrences - a.occurrences ||
+    b.pageCount - a.pageCount ||
+    (a.linkUrl < b.linkUrl ? -1 : a.linkUrl > b.linkUrl ? 1 : 0));
+
+  return summaryRows;
+}
+
+const CSV_FOOTER = '# This software © 2026 2wav inc. All Rights Reserved. Free for use under the GNU Affero General Public License v3.0 (https://www.gnu.org/licenses/agpl-3.0.html)';
 
 function generateCsv(rows, skippedUrls = []) {
   const header = [
@@ -119,7 +187,31 @@ function generateCsv(rows, skippedUrls = []) {
     lines.push(['', url, '', '', 'skipped', 'Bot-blocked domain', '', '', ''].map(escapeCsv).join(','));
   }
   lines.push('');
-  lines.push('# This software © 2026 2wav inc. All Rights Reserved. Free for use under the GNU Affero General Public License v3.0 (https://www.gnu.org/licenses/agpl-3.0.html)');
+  lines.push(CSV_FOOTER);
+  return lines.join('\n');
+}
+
+/** One row per unique link, for reviewing links rather than pages. */
+function generateSummaryCsv(summaryRows, skippedUrls = []) {
+  const header = [
+    'Link URL', 'Link Text', 'Link Type',
+    'Status', 'Status Description', 'Redirect URL',
+    'Internal/External', 'Occurrences', 'Pages', 'Example Page',
+  ];
+  const lines = [header.map(escapeCsv).join(',')];
+  for (const r of summaryRows) {
+    lines.push([
+      r.linkUrl, r.linkText, r.linkType,
+      r.status ?? '', r.statusDesc, r.redirectUrl,
+      r.internal ? 'Internal' : 'External',
+      r.occurrences, r.pageCount, r.examplePage,
+    ].map(escapeCsv).join(','));
+  }
+  for (const url of skippedUrls) {
+    lines.push([url, '', '', 'skipped', 'Bot-blocked domain', '', '', '', '', ''].map(escapeCsv).join(','));
+  }
+  lines.push('');
+  lines.push(CSV_FOOTER);
   return lines.join('\n');
 }
 
@@ -145,13 +237,16 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-function generateHtml(rows, summary, logoDataUri = '') {
+function generateHtml(rows, summary, logoDataUri = '', summaryRows = null) {
   const { pagesScanned, uniqueLinks, uniqueChecked, internalCount, externalCount, skippedUrls = [], duration, startTime } = summary;
 
-  const brokenCount       = rows.filter(r => r.category === 'broken').length;
-  const uncheckableCount  = rows.filter(r => r.category === 'uncheckable').length;
-  const errorCount        = rows.filter(r => r.category === 'error' || r.category === 'timeout').length;
-  const redirectCount     = rows.filter(r => r.category === 'redirect').length;
+  // In summary mode the cards count unique links, so they agree with the table
+  // sitting underneath them.
+  const countedRows = summaryRows || rows;
+  const brokenCount       = countedRows.filter(r => r.category === 'broken').length;
+  const uncheckableCount  = countedRows.filter(r => r.category === 'uncheckable').length;
+  const errorCount        = countedRows.filter(r => r.category === 'error' || r.category === 'timeout').length;
+  const redirectCount     = countedRows.filter(r => r.category === 'redirect').length;
 
   // Group by page for per-page breakdown
   const byPage = new Map();
@@ -160,8 +255,8 @@ function generateHtml(rows, summary, logoDataUri = '') {
     byPage.get(row.pageUrl).push(row);
   }
 
-  const tableRows = rows.map(r => `
-    <tr class="row-${r.category}">
+  const detailTableRows = rows.map(r => `
+    <tr class="row-${r.category}" data-scope="${r.internal ? 'Internal' : 'External'}">
       <td><a href="${escapeHtml(r.pageUrl)}" target="_blank">${escapeHtml(r.pageUrl)}</a></td>
       <td><a href="${escapeHtml(r.linkUrl)}" target="_blank">${escapeHtml(r.linkUrl)}</a></td>
       <td>${escapeHtml(r.linkText)}</td>
@@ -172,6 +267,33 @@ function generateHtml(rows, summary, logoDataUri = '') {
       <td>${r.responseTime !== '' ? r.responseTime + 'ms' : ''}</td>
       <td>${r.internal ? 'Internal' : 'External'}</td>
     </tr>`).join('');
+
+  const summaryTableRows = (summaryRows || []).map(r => `
+    <tr class="row-${r.category}" data-scope="${r.internal ? 'Internal' : 'External'}">
+      <td><a href="${escapeHtml(r.linkUrl)}" target="_blank">${escapeHtml(r.linkUrl)}</a></td>
+      <td>${escapeHtml(r.linkText)}</td>
+      <td>${escapeHtml(r.linkType)}</td>
+      <td>${categoryBadge(r.category, r.status)}</td>
+      <td>${escapeHtml(r.statusDesc)}</td>
+      <td>${r.redirectUrl ? `<a href="${escapeHtml(r.redirectUrl)}" target="_blank">${escapeHtml(r.redirectUrl)}</a>` : ''}</td>
+      <td>${r.occurrences.toLocaleString()}</td>
+      <td>${r.pageCount.toLocaleString()}</td>
+      <td><a href="${escapeHtml(r.examplePage)}" target="_blank">${escapeHtml(r.examplePage)}</a></td>
+      <td>${r.internal ? 'Internal' : 'External'}</td>
+    </tr>`).join('');
+
+  const tableRows = summaryRows ? summaryTableRows : detailTableRows;
+
+  const tableHead = summaryRows
+    ? `<th>Link URL</th><th>Link Text</th><th>Type</th>
+    <th>Status</th><th>Description</th><th>Redirect URL</th>
+    <th>Occurrences</th><th>Pages</th><th>Example Page</th><th>Scope</th>`
+    : `<th>Page URL</th><th>Link URL</th><th>Link Text</th><th>Type</th>
+    <th>Status</th><th>Description</th><th>Redirect URL</th><th>Response Time</th><th>Scope</th>`;
+
+  const tableHeading = summaryRows
+    ? `All Issues (${summaryRows.length.toLocaleString()} unique links)`
+    : `All Issues (${rows.length.toLocaleString()})`;
 
   const perPageSections = [...byPage.entries()].map(([page, pageRows]) => {
     const rowsHtml = pageRows.map(r => `
@@ -255,7 +377,7 @@ function generateHtml(rows, summary, logoDataUri = '') {
   <div class="card skipped"><div class="label">Skipped (bot-blocked)</div><div class="value">${skippedUrls.length.toLocaleString()}</div></div>
 </div>
 
-<h2>All Issues (${rows.length.toLocaleString()})</h2>
+<h2>${tableHeading}</h2>
 <div class="filter-bar">
   <input type="text" id="filterText" placeholder="Filter by URL or text…" oninput="applyFilters()">
   <select id="filterCat" onchange="applyFilters()">
@@ -274,8 +396,7 @@ function generateHtml(rows, summary, logoDataUri = '') {
 </div>
 <table id="mainTable">
   <thead><tr>
-    <th>Page URL</th><th>Link URL</th><th>Link Text</th><th>Type</th>
-    <th>Status</th><th>Description</th><th>Redirect URL</th><th>Response Time</th><th>Scope</th>
+    ${tableHead}
   </tr></thead>
   <tbody>${tableRows}</tbody>
 </table>
@@ -304,10 +425,9 @@ function applyFilters() {
   const scope = document.getElementById('filterScope').value;
   const rows = document.querySelectorAll('#mainTable tbody tr');
   rows.forEach(row => {
-    const cells = row.querySelectorAll('td');
     const rowText = row.textContent.toLowerCase();
     const rowCat = row.className.replace('row-','');
-    const rowScope = cells[8] ? cells[8].textContent.trim() : '';
+    const rowScope = row.dataset.scope || '';
     const textOk = !text || rowText.includes(text);
     const catOk = !cat || rowCat === cat;
     const scopeOk = !scope || rowScope === scope;
@@ -329,10 +449,12 @@ function applyFilters() {
  * @param {string} opts.output - base path (no extension)
  * @param {string} opts.format - 'csv' | 'html' | 'both'
  * @param {boolean} opts.includeRedirects
+ * @param {boolean} opts.summarize - one row per unique link instead of per page
  */
 function writeReports(pageResults, checkResults, summary, opts = {}) {
-  const { output = './broken-link-report', format = 'both', includeRedirects = false } = opts;
+  const { output = './broken-link-report', format = 'both', includeRedirects = false, summarize = false } = opts;
   const rows = buildRows(pageResults, checkResults, { includeRedirects });
+  const summaryRows = summarize ? buildSummaryRows(rows) : null;
   const written = [];
 
   const skippedUrls = summary.skippedUrls || [];
@@ -346,16 +468,19 @@ function writeReports(pageResults, checkResults, summary, opts = {}) {
 
   if (format === 'csv' || format === 'both') {
     const csvPath = `${output}.csv`;
-    fs.writeFileSync(csvPath, generateCsv(rows, skippedUrls), 'utf-8');
+    const csv = summaryRows
+      ? generateSummaryCsv(summaryRows, skippedUrls)
+      : generateCsv(rows, skippedUrls);
+    fs.writeFileSync(csvPath, csv, 'utf-8');
     written.push(csvPath);
   }
   if (format === 'html' || format === 'both') {
     const htmlPath = `${output}.html`;
-    fs.writeFileSync(htmlPath, generateHtml(rows, summary, logoDataUri), 'utf-8');
+    fs.writeFileSync(htmlPath, generateHtml(rows, summary, logoDataUri, summaryRows), 'utf-8');
     written.push(htmlPath);
   }
 
   return { rows, written };
 }
 
-module.exports = { writeReports };
+module.exports = { writeReports, buildRows, buildSummaryRows };

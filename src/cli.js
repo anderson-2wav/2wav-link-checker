@@ -33,6 +33,7 @@ program
   .option('--internal-only', 'Only check internal links')
   .option('--external-only', 'Only check external links')
   .option('--include-redirects', 'Include 3xx redirects in the report')
+  .option('--summary', 'Report one row per unique link instead of one per page occurrence')
   .option('-v, --verbose', 'Print detailed progress to console')
   .option('--user-agent <ua>', 'Custom User-Agent string')
   .option('--cache <path>', 'Path to persistent known-good URL cache file', '.link-checker-cache.json')
@@ -317,6 +318,7 @@ async function finalize(pageResults, allLinksMap, startTime, cache, partial, bro
     output: opts2.output,
     format: opts2.format,
     includeRedirects: opts2.includeRedirects || false,
+    summarize: opts2.summary || false,
   });
 
   log(`\n[Done]    Scan complete in ${formatDuration(duration)}`);

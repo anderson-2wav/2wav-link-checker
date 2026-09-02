@@ -90,21 +90,29 @@ async function extractLinks(browser, pageUrl, opts = {}) {
       return results;
     }, allResources);
 
-    // Normalize and deduplicate
-    const seen = new Set();
+    // Normalize and deduplicate. A URL used several times on one page is checked
+    // once, but the repeat is counted — a reviewer needs to know a bad link
+    // appears in the nav on every page, not just that the page contains it.
+    const byKey = new Map();
     const links = [];
     for (const raw of rawLinks) {
       const url = resolveUrl(raw.href, pageUrl);
       if (!url) continue;
       const key = `${raw.type}::${url}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      links.push({
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.count++;
+        continue;
+      }
+      const link = {
         url,
         text: raw.text,
         type: raw.type,
         internal: isInternal(url, sitemapDomain),
-      });
+        count: 1,
+      };
+      byKey.set(key, link);
+      links.push(link);
     }
 
     return { links, error: null };

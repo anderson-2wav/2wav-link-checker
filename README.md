@@ -70,6 +70,7 @@ node src/cli.js https://example.com/sitemap.xml --all-resources -o full-report
 | `--internal-only` | | Only check links on the same domain |
 | `--external-only` | | Only check links on other domains |
 | `--include-redirects` | | Include 3xx redirects in the report |
+| `--summary` | | One row per unique link instead of one per page occurrence |
 | `--cache <path>` | `.link-checker-cache.json` | Path to the known-good URL cache |
 | `--no-cache` | | Disable the cache for this run |
 | `--cache-max-age <days>` | `7` | How long cached results are considered valid |
@@ -101,6 +102,19 @@ A self-contained HTML file (no external dependencies) with:
 
 ### CSV Report
 One row per issue with columns: Page URL, Link URL, Link Text, Link Type, Status, Status Description, Redirect URL, Response Time (ms), Internal/External.
+
+### Summary Mode (`--summary`)
+Collapses the report to one row per unique link, sorted worst-first and then by how
+widely the link is used. Intended for a human reviewing a site's links — a shared nav
+link that appears on 300 pages is one decision, not 300 rows.
+
+The CSV columns become: Link URL, Link Text, Link Type, Status, Status Description,
+Redirect URL, Internal/External, Occurrences, Pages, Example Page. In the HTML report
+the "All Issues" table becomes the unique-link list; the per-page breakdown is
+unchanged below it.
+
+`Occurrences` counts every use of the link (a link in a nav and again in a footer on the
+same page counts twice); `Pages` counts the distinct pages to edit.
 
 ## License
 
