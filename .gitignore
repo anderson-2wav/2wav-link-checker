@@ -4,3 +4,4 @@ node_modules
 .link-checker-cache.json
 *.csv
 *.html
+.private
